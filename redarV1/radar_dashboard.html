@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ESP32 Radar — Security Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --g:#00e5a0;--gd:#00b07a;--gx:#003d22;
+  --r:#ff3355;--rx:rgba(255,51,85,.18);
+  --a:#ffb800;--ax:rgba(255,184,0,.18);
+  --bg:#040a06;--sur:#070f09;--sur2:#0a150c;
+  --bdr:rgba(0,229,160,.1);--bdr2:rgba(0,229,160,.06);
+  --txt:rgba(0,229,160,.55);--txb:rgba(0,229,160,.85);
+  --mono:'JetBrains Mono',monospace;
+  --body:'Space Grotesk',sans-serif;
+  --z1:80;--z2:250;--zmax:400;
+}
+
+html,body{height:100%;width:100%;background:var(--bg);color:var(--g);font-family:var(--mono);overflow:hidden}
+
+/* CRT */
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,0,0,.05) 3px,rgba(0,0,0,.05) 4px)}
+
+/* Layout */
+.app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:56px 1fr 48px;height:100vh}
+
+/* ── Topbar ── */
+header{
+  grid-column:1/-1;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;
+  border-bottom:1px solid var(--bdr);
+  background:linear-gradient(90deg,#060f09,#040c07);
+  position:relative;z-index:10
+}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-icon{width:30px;height:30px;display:flex;align-items:center;justify-content:center}
+.brand-icon svg{width:100%;height:100%}
+.brand-name{font-family:var(--body);font-size:13px;font-weight:600;letter-spacing:6px;color:var(--g);text-shadow:0 0 18px rgba(0,229,160,.4)}
+.brand-sub{font-size:9px;letter-spacing:3px;color:var(--txt);margin-top:1px;font-family:var(--body)}
+.topbar-right{display:flex;gap:20px;align-items:center}
+.pill{padding:3px 10px;border:1px solid var(--bdr);border-radius:2px;font-size:9px;letter-spacing:2px;color:var(--txt);font-family:var(--body)}
+.pill.live{border-color:var(--g);color:var(--g);box-shadow:0 0 8px rgba(0,229,160,.2)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--g);box-shadow:0 0 8px var(--g);animation:blink 1.3s ease-in-out infinite;flex-shrink:0}
+.status-dot.off{background:var(--r);box-shadow:0 0 8px var(--r)}
+.clock{font-size:12px;font-family:var(--mono);color:var(--txb)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+
+/* ── Radar canvas area ── */
+.radar-wrap{
+  display:flex;align-items:center;justify-content:center;
+  position:relative;padding:16px;
+  background:radial-gradient(ellipse 75% 65% at 50% 55%,#06180c 0%,var(--bg) 100%)
+}
+#radarCanvas{border-radius:50%;display:block;cursor:crosshair;
+  box-shadow:0 0 0 1px rgba(0,229,160,.08),0 0 0 3px rgba(0,229,160,.03),0 0 70px rgba(0,229,160,.08)}
+
+/* Alert flash */
+#alertFlash{position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+  background:rgba(255,51,85,.06);opacity:0;transition:opacity .15s}
+#alertFlash.on{opacity:1}
+
+/* Zone legend */
+.zone-legend{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  display:flex;gap:14px;font-family:var(--body);font-size:10px;font-weight:500;letter-spacing:1.5px}
+.zleg{display:flex;align-items:center;gap:5px;opacity:.75}
+.zleg-sw{width:10px;height:10px;border-radius:2px}
+
+/* ── Side panel ── */
+aside{
+  border-left:1px solid var(--bdr);background:var(--sur);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+
+.pblock{padding:14px 16px;border-bottom:1px solid var(--bdr2);flex-shrink:0}
+.plabel{font-size:8px;letter-spacing:3px;color:rgba(0,229,160,.3);
+  font-family:var(--body);font-weight:600;margin-bottom:10px;
+  display:flex;align-items:center;gap:8px;text-transform:uppercase}
+.plabel::after{content:'';flex:1;height:1px;background:var(--bdr2)}
+
+/* Telemetry cards */
+.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tcard{background:rgba(0,229,160,.025);border:1px solid rgba(0,229,160,.07);padding:10px 12px;position:relative}
+.tcard::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:rgba(0,229,160,.2)}
+.tc-lbl{font-family:var(--body);font-size:9px;letter-spacing:2px;color:var(--txt);margin-bottom:3px}
+.tc-val{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--g);text-shadow:0 0 10px rgba(0,229,160,.4);line-height:1}
+.tc-unit{font-size:9px;opacity:.35;margin-left:2px}
+
+/* Threat meter */
+.threat-track{height:5px;background:rgba(0,229,160,.07);border:1px solid rgba(0,229,160,.1);border-radius:2px;overflow:hidden;margin:0 0 6px}
+.threat-fill{height:100%;width:0;transition:width .5s ease,background .4s;border-radius:2px}
+.threat-labels{display:flex;justify-content:space-between;font-family:var(--body);font-size:9px;font-weight:600;letter-spacing:1px;color:rgba(0,229,160,.25)}
+#threat-text{font-family:var(--body);font-size:10px;letter-spacing:2px;font-weight:600;text-align:center;margin-top:8px;color:var(--g);opacity:.4}
+
+/* Zone config */
+.zone-cfg{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;font-size:11px;margin-bottom:6px}
+.zone-cfg label{font-family:var(--body);font-size:9px;letter-spacing:1.5px;color:var(--txt)}
+.zone-cfg span{font-family:var(--mono);font-size:10px;color:var(--g);min-width:30px;text-align:right}
+input[type=range]{-webkit-appearance:none;appearance:none;height:3px;background:rgba(0,229,160,.15);border-radius:2px;outline:none;cursor:pointer;width:100%}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--g);box-shadow:0 0 6px rgba(0,229,160,.6)}
+
+/* Targets */
+.targets-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(0,229,160,.12) transparent}
+.target-row{
+  display:grid;grid-template-columns:8px 50px 1fr auto;align-items:center;gap:8px;
+  padding:8px 16px;border-bottom:1px solid rgba(0,229,160,.04);font-size:11px;
+  animation:fadeIn .2s ease;transition:background .1s
+}
+.target-row:hover{background:rgba(0,229,160,.03)}
+@keyframes fadeIn{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
+.ti-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ti-angle{font-family:var(--mono);font-size:10px;color:rgba(0,229,160,.4)}
+.ti-zone{font-family:var(--body);font-size:9px;font-weight:600;letter-spacing:1.5px}
+.ti-dist{font-family:var(--mono);font-size:12px;color:var(--g);text-align:right}
+
+/* History tab */
+.tabs{display:flex;border-bottom:1px solid var(--bdr2);flex-shrink:0}
+.tab{flex:1;padding:8px;font-family:var(--body);font-size:9px;letter-spacing:2px;font-weight:600;
+  text-align:center;color:var(--txt);cursor:pointer;border-bottom:2px solid transparent;
+  transition:color .15s,border-color .15s;text-transform:uppercase}
+.tab.active{color:var(--g);border-color:var(--g)}
+.tabpane{display:none;flex:1;overflow-y:auto;flex-direction:column;scrollbar-width:thin;scrollbar-color:rgba(0,229,160,.1) transparent}
+.tabpane.active{display:flex}
+
+.hist-row{padding:7px 16px;border-bottom:1px solid rgba(0,229,160,.04);font-size:10px;
+  display:grid;grid-template-columns:50px 36px 1fr auto;gap:8px;align-items:center}
+.hist-time{font-family:var(--mono);font-size:9px;color:rgba(0,229,160,.35)}
+.hist-ang{font-family:var(--mono);font-size:9px;color:var(--txt)}
+.hist-bar{height:3px;background:rgba(0,229,160,.12);border-radius:1px;overflow:hidden}
+.hist-bar-fill{height:100%;border-radius:1px;transition:width .3s}
+.hist-dist{font-family:var(--mono);font-size:9px;color:var(--g);text-align:right;min-width:34px}
+
+.btn-export{
+  margin:10px 16px;padding:7px;
+  border:1px solid var(--bdr);background:transparent;color:var(--txt);
+  font-family:var(--body);font-size:9px;letter-spacing:2px;font-weight:600;
+  text-transform:uppercase;cursor:pointer;transition:all .15s
+}
+.btn-export:hover{color:var(--g);border-color:var(--g);background:rgba(0,229,160,.04)}
+
+/* ── Bottom bar ── */
+footer{
+  grid-column:1/-1;border-top:1px solid var(--bdr);
+  display:flex;align-items:center;
+  background:var(--sur);font-family:var(--body);font-size:9px;font-weight:600;letter-spacing:1.5px;overflow:hidden
+}
+.bitem{padding:0 18px;height:100%;display:flex;align-items:center;gap:6px;
+  border-right:1px solid var(--bdr2);color:rgba(0,229,160,.4);white-space:nowrap}
+.bitem strong{color:rgba(0,229,160,.75);font-weight:700}
+.ticker-wrap{flex:1;overflow:hidden;padding:0 12px;height:100%;display:flex;align-items:center}
+.ticker{display:inline-flex;gap:32px;animation:ticker 22s linear infinite;white-space:nowrap;color:rgba(0,229,160,.25);font-size:9px}
+@keyframes ticker{from{transform:translateX(100%)}to{transform:translateX(-100%)}}
+
+/* Sound toggle */
+.sound-btn{background:transparent;border:1px solid var(--bdr);padding:3px 10px;
+  font-family:var(--body);font-size:9px;letter-spacing:2px;font-weight:600;
+  color:var(--txt);cursor:pointer;transition:all .15s;white-space:nowrap}
+.sound-btn:hover{color:var(--g);border-color:var(--g)}
+.sound-btn.on{color:var(--g);border-color:var(--g);box-shadow:0 0 8px rgba(0,229,160,.15)}
+
+/* Alert overlay */
+#alert-overlay{
+  display:none;position:absolute;bottom:70px;right:16px;z-index:50;
+  border:1px solid var(--r);background:rgba(4,10,6,.95);padding:12px 18px;
+  min-width:200px;animation:alertPulse 1.5s ease-in-out infinite
+}
+#alert-overlay.show{display:block}
+@keyframes alertPulse{0%,100%{box-shadow:0 0 20px var(--rx)}50%{box-shadow:0 0 40px var(--rx)}}
+.ao-title{color:var(--r);font-family:var(--body);font-size:9px;font-weight:700;letter-spacing:3px;margin-bottom:6px}
+.ao-body{font-family:var(--mono);font-size:12px;color:var(--g)}
+
+/* connection warning */
+#no-data{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  border:1px solid var(--r);padding:22px 36px;text-align:center;
+  background:rgba(4,10,6,.96);z-index:20;
+  font-family:var(--body);font-size:10px;color:var(--r);letter-spacing:3px;font-weight:600}
+#no-data.show{display:block}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<header>
+  <div class="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="15,2 27,8.5 27,21.5 15,28 3,21.5 3,8.5" stroke="#00e5a0" stroke-width="1.2" fill="rgba(0,229,160,.06)"/>
+        <circle cx="15" cy="15" r="4.5" stroke="#00e5a0" stroke-width="1" fill="none"/>
+        <line x1="15" y1="2" x2="15" y2="10.5" stroke="#00e5a0" stroke-width=".8"/>
+        <line x1="15" y1="19.5" x2="15" y2="28" stroke="#00e5a0" stroke-width=".8"/>
+        <circle cx="15" cy="15" r="1.5" fill="#00e5a0"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">PERIMETER RADAR</div>
+      <div class="brand-sub">ESP32 · HC-SR04 · REAL-TIME MONITORING</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <button class="sound-btn on" id="soundBtn" onclick="toggleSound()">🔊 ALERTS ON</button>
+    <span class="pill" id="connPill">CONNECTING</span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div class="status-dot" id="connDot"></div>
+      <span id="connLabel" style="font-family:var(--body);font-size:9px;letter-spacing:2px;color:var(--g)">SEARCHING</span>
+    </div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+</header>
+
+<!-- RADAR -->
+<main class="radar-wrap" id="radarWrap">
+  <canvas id="radarCanvas"></canvas>
+  <div id="alertFlash"></div>
+  <div class="zone-legend">
+    <div class="zleg"><div class="zleg-sw" style="background:var(--r)"></div><span style="color:var(--r)" id="leg-z1">CLOSE &lt;80cm</span></div>
+    <div class="zleg"><div class="zleg-sw" style="background:var(--a)"></div><span style="color:var(--a)" id="leg-z2">MID &lt;250cm</span></div>
+    <div class="zleg"><div class="zleg-sw" style="background:var(--g)"></div><span style="color:var(--g)">CLEAR</span></div>
+  </div>
+  <div id="no-data">⚠ NO RADAR DATA<br><small style="font-size:9px;opacity:.5;letter-spacing:1px;font-family:var(--mono)">Check radar_receive.php is running</small></div>
+  <div id="alert-overlay">
+    <div class="ao-title">⚠ OBJECT DETECTED</div>
+    <div class="ao-body" id="alertBody">---</div>
+  </div>
+</main>
+
+<!-- SIDE PANEL -->
+<aside>
+  <!-- Live telemetry -->
+  <div class="pblock">
+    <div class="plabel">Live Telemetry</div>
+    <div class="tgrid">
+      <div class="tcard">
+        <div class="tc-lbl">ANGLE</div>
+        <div class="tc-val"><span id="st-angle">---</span><span class="tc-unit">°</span></div>
+      </div>
+      <div class="tcard">
+        <div class="tc-lbl">DISTANCE</div>
+        <div class="tc-val"><span id="st-dist">---</span><span class="tc-unit">cm</span></div>
+      </div>
+    </div>
+    <div style="margin-top:8px;padding:6px 10px;background:rgba(0,229,160,.025);border:1px solid rgba(0,229,160,.07);display:flex;justify-content:space-between;align-items:center">
+      <span style="font-family:var(--body);font-size:9px;letter-spacing:1.5px;color:var(--txt)">SWEEP</span>
+      <span id="st-dir" style="font-family:var(--body);font-size:10px;font-weight:600;color:var(--g)">---</span>
+    </div>
+  </div>
+
+  <!-- Threat -->
+  <div class="pblock">
+    <div class="plabel">Threat Level</div>
+    <div class="threat-track"><div class="threat-fill" id="threatFill"></div></div>
+    <div class="threat-labels"><span>LOW</span><span>MED</span><span>HIGH</span><span>CRIT</span></div>
+    <div id="threat-text">SCANNING...</div>
+  </div>
+
+  <!-- Zone config -->
+  <div class="pblock">
+    <div class="plabel">Detection Zones</div>
+    <div class="zone-cfg">
+      <label>CLOSE</label>
+      <input type="range" id="zClose" min="20" max="200" value="80" oninput="updateZones()"/>
+      <span id="zCloseVal">80cm</span>
+    </div>
+    <div class="zone-cfg">
+      <label>MID</label>
+      <input type="range" id="zMid" min="100" max="400" value="250" oninput="updateZones()"/>
+      <span id="zMidVal">250cm</span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('targets')">TARGETS</div>
+    <div class="tab" onclick="switchTab('history')">HISTORY</div>
+  </div>
+
+  <div class="tabpane active" id="tab-targets">
+    <div class="targets-list" id="targetsList">
+      <div style="padding:20px 16px;opacity:.25;font-family:var(--body);font-size:10px;letter-spacing:1px">NO TARGETS DETECTED</div>
+    </div>
+  </div>
+
+  <div class="tabpane" id="tab-history">
+    <div style="flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(0,229,160,.1) transparent" id="histList">
+      <div style="padding:20px 16px;opacity:.25;font-family:var(--body);font-size:10px;letter-spacing:1px">NO HISTORY YET</div>
+    </div>
+    <button class="btn-export" onclick="exportCSV()">⬇ EXPORT CSV</button>
+  </div>
+</aside>
+
+<!-- FOOTER -->
+<footer>
+  <div class="bitem"><span>RANGE</span><strong>400cm</strong></div>
+  <div class="bitem"><span>SWEEP</span><strong>0°–180°</strong></div>
+  <div class="bitem"><span>POLL</span><strong>100ms</strong></div>
+  <div class="bitem"><span>FPS</span><strong id="fpsVal">--</strong></div>
+  <div class="bitem"><span>DETECTIONS</span><strong id="totalDet">0</strong></div>
+  <div class="bitem"><span>UPTIME</span><strong id="uptimeVal">00:00</strong></div>
+  <div class="ticker-wrap">
+    <div class="ticker">
+      SYSTEM NOMINAL · ESP32 ACTIVE · HC-SR04 ULTRASONIC SENSOR · SERVO SWEEP 0°→180°
+      · OBJECT DETECTION ENABLED · REAL-TIME TELEMETRY · SECURE CHANNEL · PERIMETER MONITORING
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+// ── Config / State ──────────────────────────────────────
+let Z1 = 80, Z2 = 250;
+const MAX_DIST = 400;
+const TRAIL_LEN = 10;
+const HIST_MAX = 200;
+
+let points    = new Array(181).fill(0);
+let sweepAngle= 90;
+let sweepDir  = 1;
+let trailAngles = [];
+let lastTs    = 0;
+let connected = false;
+let soundOn   = true;
+let totalDet  = 0;
+let history   = [];
+let fCount    = 0, fTs = performance.now();
+let startTs   = Date.now();
+let lastAlertTs = 0;
+
+// ── Canvas setup ────────────────────────────────────────
+const canvas = document.getElementById('radarCanvas');
+const ctx    = canvas.getContext('2d');
+
+function resize() {
+  const wrap = document.getElementById('radarWrap');
+  const sz   = Math.min(wrap.clientWidth - 40, wrap.clientHeight - 80, 580);
+  canvas.width = canvas.height = sz;
+}
+resize();
+window.addEventListener('resize', ()=>{ resize(); drawFrame(); });
+
+const C  = ()=> canvas.width/2;
+const R  = ()=> C()*0.9;
+
+// ── Zone config ─────────────────────────────────────────
+function updateZones() {
+  Z1 = parseInt(document.getElementById('zClose').value);
+  Z2 = parseInt(document.getElementById('zMid').value);
+  if (Z1 >= Z2) { Z2 = Z1 + 50; document.getElementById('zMid').value = Z2; }
+  document.getElementById('zCloseVal').textContent = Z1+'cm';
+  document.getElementById('zMidVal').textContent   = Z2+'cm';
+  document.getElementById('leg-z1').textContent    = 'CLOSE <'+Z1+'cm';
+  document.getElementById('leg-z2').textContent    = 'MID <'+Z2+'cm';
+}
+
+// ── Colors ───────────────────────────────────────────────
+function distColor(d, a=1) {
+  if (d <= 0 || d > MAX_DIST) return null;
+  if (d < Z1) return `rgba(255,51,85,${a})`;
+  if (d < Z2) return `rgba(255,184,0,${a})`;
+  return `rgba(0,229,160,${a})`;
+}
+
+function polar(angle, dist) {
+  const r   = (dist/MAX_DIST)*R();
+  const rad = (angle-90)*Math.PI/180;
+  return { x: C()+r*Math.cos(rad), y: C()+r*Math.sin(rad) };
+}
+
+// ── Draw static grid ─────────────────────────────────────
+function drawStatic() {
+  const c=C(), r=R();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // BG radial
+  const bg = ctx.createRadialGradient(c,c,0,c,c,r);
+  bg.addColorStop(0,'#071d0e'); bg.addColorStop(0.6,'#041209'); bg.addColorStop(1,'#020c06');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.arc(c,c,r+4,0,Math.PI*2); ctx.fill();
+
+  // Zone shading (only upper hemisphere = 0°-180°)
+  const zoneData = [
+    {pct:Z2/MAX_DIST, color:`rgba(255,184,0,0.03)`},
+    {pct:Z1/MAX_DIST, color:`rgba(255,51,85,0.05)`},
+  ];
+  zoneData.forEach(z=>{
+    ctx.beginPath();
+    ctx.arc(c,c,r*z.pct,Math.PI,0);
+    ctx.lineTo(c,c); ctx.closePath();
+    ctx.fillStyle = z.color; ctx.fill();
+  });
+
+  // Range rings
+  [0.25,0.5,0.75,1.0].forEach((f,i)=>{
+    ctx.beginPath();
+    ctx.arc(c,c,r*f,Math.PI,0);
+    ctx.strokeStyle = i===3?'rgba(0,229,160,.18)':'rgba(0,229,160,.07)';
+    ctx.lineWidth   = i===3?1.2:0.7;
+    ctx.setLineDash(i<3?[4,8]:[]);
+    ctx.stroke(); ctx.setLineDash([]);
+    // distance labels
+    const labelDist = Math.round(MAX_DIST*f);
+    ctx.fillStyle = 'rgba(0,229,160,.22)';
+    ctx.font = `${Math.max(9,canvas.width*.015)}px JetBrains Mono`;
+    ctx.textAlign = 'left';
+    ctx.fillText(labelDist, c+5, c-r*f+11);
+  });
+
+  // Spokes
+  for(let a=0;a<=180;a+=15){
+    const rad=(a-90)*Math.PI/180;
+    const major = a%30===0;
+    ctx.beginPath();
+    ctx.moveTo(c,c);
+    ctx.lineTo(c+r*Math.cos(rad),c+r*Math.sin(rad));
+    ctx.strokeStyle = major?'rgba(0,229,160,.12)':'rgba(0,229,160,.04)';
+    ctx.lineWidth = major?.8:.4;
+    ctx.stroke();
+    if(major){
+      const lx = c+(r+14)*Math.cos(rad);
+      const ly = c+(r+14)*Math.sin(rad);
+      ctx.fillStyle='rgba(0,229,160,.35)';
+      ctx.font=`${Math.max(8,canvas.width*.018)}px JetBrains Mono`;
+      ctx.textAlign='center';
+      ctx.fillText(a+'°',lx,ly+4);
+    }
+  }
+
+  // Baseline
+  ctx.beginPath(); ctx.moveTo(c-r,c); ctx.lineTo(c+r,c);
+  ctx.strokeStyle='rgba(0,229,160,.18)'; ctx.lineWidth=1; ctx.stroke();
+
+  // Center cross
+  const cs=5;
+  ctx.beginPath();
+  ctx.moveTo(c-cs,c); ctx.lineTo(c+cs,c);
+  ctx.moveTo(c,c-cs); ctx.lineTo(c,c+cs);
+  ctx.strokeStyle='rgba(0,229,160,.5)'; ctx.lineWidth=1; ctx.stroke();
+}
+
+// ── Sweep ───────────────────────────────────────────────
+function drawSweep() {
+  const c=C(), r=R();
+  trailAngles.push(sweepAngle);
+  if(trailAngles.length>TRAIL_LEN) trailAngles.shift();
+
+  // Cone fill
+  if(trailAngles.length>1){
+    const r1=(trailAngles[0]-90)*Math.PI/180;
+    const r2=(trailAngles[trailAngles.length-1]-90)*Math.PI/180;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(c,c);
+    ctx.arc(c,c,r,Math.min(r1,r2),Math.max(r1,r2));
+    ctx.closePath();
+    const cg=ctx.createRadialGradient(c,c,0,c,c,r);
+    cg.addColorStop(0,'rgba(0,229,160,.14)');
+    cg.addColorStop(.7,'rgba(0,229,160,.05)');
+    cg.addColorStop(1,'rgba(0,229,160,0)');
+    ctx.fillStyle=cg; ctx.fill(); ctx.restore();
+  }
+
+  // Trail lines
+  trailAngles.forEach((a,i)=>{
+    const alpha=((i+1)/TRAIL_LEN)*.75;
+    const rad=(a-90)*Math.PI/180;
+    const grd=ctx.createLinearGradient(c,c,c+r*Math.cos(rad),c+r*Math.sin(rad));
+    grd.addColorStop(0,`rgba(0,229,160,${alpha})`);
+    grd.addColorStop(.7,`rgba(0,229,160,${alpha*.3})`);
+    grd.addColorStop(1,'rgba(0,229,160,0)');
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(c,c);
+    ctx.lineTo(c+r*Math.cos(rad),c+r*Math.sin(rad));
+    ctx.strokeStyle=grd;
+    ctx.lineWidth=i===trailAngles.length-1?2:0.8;
+    ctx.stroke(); ctx.restore();
+  });
+
+  // Tip
+  const tipRad=(sweepAngle-90)*Math.PI/180;
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(c,c);
+  ctx.lineTo(c+r*Math.cos(tipRad),c+r*Math.sin(tipRad));
+  ctx.strokeStyle='rgba(0,229,160,.95)'; ctx.lineWidth=1.5;
+  ctx.shadowColor='rgba(0,229,160,.8)'; ctx.shadowBlur=10;
+  ctx.stroke(); ctx.restore();
+}
+
+// ── Objects ─────────────────────────────────────────────
+function drawObjects() {
+  points.forEach((d,angle)=>{
+    if(d<=0||d>MAX_DIST) return;
+    const col=distColor(d,.95); if(!col) return;
+    const p=polar(angle,d);
+    const sz=d<Z1?5:4;
+    ctx.save();
+
+    // Glow halo
+    const grd=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,sz*5);
+    grd.addColorStop(0,col);
+    grd.addColorStop(1,col.replace(/[\d.]+\)$/,'0)'));
+    ctx.beginPath(); ctx.arc(p.x,p.y,sz*5,0,Math.PI*2);
+    ctx.fillStyle=grd; ctx.fill();
+
+    // Core
+    ctx.beginPath(); ctx.arc(p.x,p.y,sz,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=14; ctx.fill();
+
+    // Echo ring
+    ctx.beginPath(); ctx.arc(p.x,p.y,sz+6,0,Math.PI*2);
+    ctx.strokeStyle=col.replace(/[\d.]+\)$/,'0.2)');
+    ctx.lineWidth=1; ctx.stroke();
+
+    // Line to center
+    ctx.beginPath(); ctx.moveTo(C(),C()); ctx.lineTo(p.x,p.y);
+    ctx.strokeStyle=col.replace(/[\d.]+\)$/,'0.08)');
+    ctx.lineWidth=0.5; ctx.setLineDash([3,6]); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Distance label near dot
+    if(d<Z2){
+      const lx=p.x+(p.x>C()?14:-14);
+      const ly=p.y+(p.y>C()?14:-14);
+      ctx.font=`bold ${Math.max(8,canvas.width*.015)}px JetBrains Mono`;
+      ctx.fillStyle=col; ctx.textAlign='center'; ctx.shadowBlur=0;
+      ctx.fillText(d+'cm',lx,ly);
+    }
+    ctx.restore();
+  });
+}
+
+function drawFrame() { drawStatic(); drawSweep(); drawObjects(); }
+
+// ── Panel updates ────────────────────────────────────────
+function updatePanel(data) {
+  const dist = points[sweepAngle]||0;
+  document.getElementById('st-angle').textContent = sweepAngle;
+  document.getElementById('st-dist').textContent  = dist>0?dist:'---';
+  document.getElementById('st-dir').textContent   = sweepDir===1?'▶  0° → 180°':'◀  180° → 0°';
+
+  // Targets
+  const targets = points
+    .map((d,a)=>({angle:a,dist:d}))
+    .filter(t=>t.dist>0&&t.dist<=MAX_DIST)
+    .sort((a,b)=>a.dist-b.dist)
+    .slice(0,20);
+
+  document.getElementById('totalDet').textContent = totalDet;
+
+  // Threat level
+  const closest = targets.length?targets[0].dist:0;
+  let pct=0, tcol='var(--g)', txt='NO THREAT DETECTED';
+  if(closest>0){
+    if(closest<Z1){ pct=85+(Z1-closest)/Z1*15; tcol='var(--r)'; txt='⚠ CRITICAL — CLOSE OBJECT'; }
+    else if(closest<Z2){ pct=40+(Z2-closest)/Z2*45; tcol='var(--a)'; txt='△ MEDIUM RANGE DETECTION'; }
+    else{ pct=5+(MAX_DIST-closest)/MAX_DIST*35; tcol='var(--g)'; txt='✔ CLEAR — LOW THREAT'; }
+  }
+  const fill=document.getElementById('threatFill');
+  fill.style.width=Math.min(100,pct)+'%';
+  fill.style.background=tcol;
+  fill.style.boxShadow=`0 0 6px ${tcol}`;
+  const tt=document.getElementById('threat-text');
+  tt.textContent=targets.length?txt:'SCANNING...';
+  tt.style.color=targets.length?tcol:'rgba(0,229,160,.4)';
+  tt.style.opacity=targets.length?'.9':'.4';
+
+  // Targets list
+  const tl=document.getElementById('targetsList');
+  if(!targets.length){
+    tl.innerHTML='<div style="padding:20px 16px;opacity:.25;font-family:var(--body);font-size:10px;letter-spacing:1px">NO TARGETS DETECTED</div>';
+    return;
+  }
+  tl.innerHTML=targets.map(t=>{
+    const cls=t.dist<Z1?'r':t.dist<Z2?'a':'g';
+    const col=cls==='r'?'var(--r)':cls==='a'?'var(--a)':'var(--g)';
+    const lbl=cls==='r'?'CLOSE':cls==='a'?'MID':'FAR';
+    return `<div class="target-row">
+      <div class="ti-dot" style="background:${col};box-shadow:0 0 5px ${col}"></div>
+      <span class="ti-angle">${t.angle}°</span>
+      <span class="ti-zone" style="color:${col}">${lbl}</span>
+      <span class="ti-dist">${t.dist}<span style="font-size:8px;opacity:.4">cm</span></span>
+    </div>`;
+  }).join('');
+
+  // Alert
+  if(closest>0&&closest<Z1) triggerAlert(closest,targets[0].angle);
+}
+
+// ── Alert ────────────────────────────────────────────────
+function triggerAlert(dist, angle) {
+  const now=Date.now();
+  if(now-lastAlertTs<2000) return;
+  lastAlertTs=now;
+  totalDet++;
+
+  // Flash border
+  const f=document.getElementById('alertFlash');
+  f.classList.add('on');
+  setTimeout(()=>f.classList.remove('on'),300);
+
+  // Overlay
+  const ov=document.getElementById('alert-overlay');
+  document.getElementById('alertBody').textContent=`${dist}cm @ ${angle}°`;
+  ov.classList.add('show');
+  setTimeout(()=>ov.classList.remove('show'),3000);
+
+  if(soundOn) playPing(dist);
+}
+
+// ── History ──────────────────────────────────────────────
+function addHistory(angle, dist) {
+  const ts=new Date().toTimeString().slice(0,8);
+  history.unshift({ts,angle,dist});
+  if(history.length>HIST_MAX) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  const hl=document.getElementById('histList');
+  if(!history.length){
+    hl.innerHTML='<div style="padding:20px 16px;opacity:.25;font-family:var(--body);font-size:10px;letter-spacing:1px">NO HISTORY YET</div>';
+    return;
+  }
+  hl.innerHTML=history.slice(0,60).map(h=>{
+    const col=h.dist<Z1?'var(--r)':h.dist<Z2?'var(--a)':'var(--g)';
+    const pct=Math.round(h.dist/MAX_DIST*100);
+    return `<div class="hist-row">
+      <span class="hist-time">${h.ts}</span>
+      <span class="hist-ang">${h.angle}°</span>
+      <div class="hist-bar"><div class="hist-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+      <span class="hist-dist" style="color:${col}">${h.dist}cm</span>
+    </div>`;
+  }).join('');
+}
+
+function exportCSV() {
+  const rows=['Time,Angle (°),Distance (cm)'];
+  history.forEach(h=>rows.push(`${h.ts},${h.angle},${h.dist}`));
+  const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`radar_log_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── Tabs ─────────────────────────────────────────────────
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tabpane').forEach(p=>p.classList.remove('active'));
+  const idx=id==='targets'?0:1;
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+  document.getElementById('tab-'+id).classList.add('active');
+}
+
+// ── Audio ────────────────────────────────────────────────
+const aCtx = new(window.AudioContext||window.webkitAudioContext)();
+let lastPingTs=0;
+
+function playPing(dist) {
+  const osc=aCtx.createOscillator(), gain=aCtx.createGain();
+  osc.connect(gain); gain.connect(aCtx.destination);
+  osc.frequency.value=dist<Z1?1100:dist<Z2?550:280;
+  osc.type='sine';
+  gain.gain.setValueAtTime(0.4,aCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001,aCtx.currentTime+0.4);
+  osc.start(aCtx.currentTime); osc.stop(aCtx.currentTime+0.4);
+}
+
+function toggleSound() {
+  soundOn=!soundOn;
+  const btn=document.getElementById('soundBtn');
+  btn.textContent=soundOn?'🔊 ALERTS ON':'🔇 ALERTS OFF';
+  btn.classList.toggle('on',soundOn);
+}
+
+// ── Clock / FPS / Uptime ─────────────────────────────────
+function tick() {
+  document.getElementById('clock').textContent=new Date().toTimeString().slice(0,8);
+  const sec=Math.floor((Date.now()-startTs)/1000);
+  const m=String(Math.floor(sec/60)).padStart(2,'0');
+  const s=String(sec%60).padStart(2,'0');
+  document.getElementById('uptimeVal').textContent=m+':'+s;
+}
+setInterval(tick,1000); tick();
+
+function updateFPS() {
+  fCount++;
+  const now=performance.now();
+  if(now-fTs>1000){
+    document.getElementById('fpsVal').textContent=Math.round(fCount*1000/(now-fTs));
+    fCount=0; fTs=now;
+  }
+}
+
+// ── Connection ───────────────────────────────────────────
+function setConnected(ok) {
+  connected=ok;
+  const dot=document.getElementById('connDot');
+  const lbl=document.getElementById('connLabel');
+  const pill=document.getElementById('connPill');
+  const nd=document.getElementById('no-data');
+  if(ok){
+    dot.className='status-dot';
+    lbl.textContent='LIVE';
+    pill.className='pill live';
+    pill.textContent='CONNECTED';
+    nd.classList.remove('show');
+  } else {
+    dot.className='status-dot off';
+    lbl.textContent='OFFLINE';
+    pill.className='pill';
+    pill.textContent='NO SIGNAL';
+    nd.classList.add('show');
+  }
+}
+
+// ── Main Poll ────────────────────────────────────────────
+async function poll() {
+  try {
+    const res  = await fetch('radar_api.php?_='+Date.now());
+    const data = await res.json();
+
+    if(data.error) { setConnected(false); }
+    else {
+      setConnected(true);
+      if(data.ts !== lastTs) {
+        lastTs = data.ts;
+        const prev = [...points];
+        points = data.points;
+        sweepDir = data.direction;
+
+        // Update sweep angle to latest active reading
+        const active = Object.keys(data.points).map(Number).filter(a=>data.points[a]>0);
+        if(active.length){
+          sweepAngle = sweepDir===1 ? Math.max(...active) : Math.min(...active);
+          sweepAngle = Math.max(0,Math.min(180,sweepAngle));
+        }
+
+        // Log to history if new close detection
+        points.forEach((d,a)=>{
+          if(d>0&&d<=MAX_DIST&&d!==prev[a]) addHistory(a,d);
+        });
+      }
+      drawFrame();
+      updatePanel(data);
+      updateFPS();
+    }
+  } catch(e) { setConnected(false); }
+  setTimeout(poll,100);
+}
+
+// ── Boot ─────────────────────────────────────────────────
+drawStatic();
+poll();
+</script>
+</body>
+</html>
