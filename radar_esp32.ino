@@ -26,8 +26,8 @@
 #include <HTTPClient.h>
 
 // ── WiFi credentials ────────────────────────────────────
-const char* ssid     = "OLAX-LTE-C549";   // ← change
-const char* password = "amith1977";       // ← change
+const char* ssid     = "YOUR_ROuter";   // ← change
+const char* password = "YOUR_PASSWORD";       // ← change
 
 // ── Server config ────────────────────────────────────────
 const char* serverIP   = "192.168.0.102"; // ← your PC IP
